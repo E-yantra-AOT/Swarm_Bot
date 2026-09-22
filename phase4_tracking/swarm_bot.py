@@ -9,10 +9,15 @@ Runs identically on BOTH robots. Each robot:
   4. Picks whichever detection (own or partner's) is more confident.
   5. Steers its motors toward the best known target position.
   6. Stops safely if both detections go stale (watchdog).
+  7. Optionally streams annotated frames over HTTP (--stream flag).
 
 Usage:
-    ~/swarm_venv/bin/python ~/swarm_bot.py --id A    # on Robot A
-    ~/swarm_venv/bin/python ~/swarm_bot.py --id B    # on Robot B
+    ~/swarm_venv/bin/python ~/swarm_bot.py --id A           # Robot A, no stream
+    ~/swarm_venv/bin/python ~/swarm_bot.py --id B           # Robot B, no stream
+    ~/swarm_venv/bin/python ~/swarm_bot.py --id A --stream  # Robot A + live stream on :5000
+
+Stream is a background thread — it NEVER blocks YOLO inference or motor commands.
+YOLO writes annotated frames to a shared buffer; the stream thread reads from it lazily.
 
 No master. No slave. Both robots are equal peers.
 """
@@ -29,6 +34,8 @@ from dataclasses import dataclass, field
 
 import cv2
 import serial
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 
 # ── Resolve shared/ module path ───────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "shared"))
@@ -96,6 +103,19 @@ class SwarmState:
         self.my_target      = None   # Latest detection from own camera
         self.partner_target = None   # Latest detection from XBee
         self.is_turning     = False  # Hysteresis state
+        # Stream buffer — camera thread writes, stream thread reads lazily
+        self._frame_lock    = threading.Lock()
+        self.stream_frame   = None   # Latest annotated BGR frame (numpy array)
+
+    def push_frame(self, frame):
+        """Non-blocking frame push for stream. Drops old frame if not consumed."""
+        with self._frame_lock:
+            self.stream_frame = frame
+
+    def pop_frame(self):
+        """Non-blocking frame read for stream thread."""
+        with self._frame_lock:
+            return self.stream_frame
 
     def update_my(self, t: Target):
         with self._lock:
@@ -176,29 +196,43 @@ def camera_thread(state: SwarmState, robot_id: str, xbee: XBeeTransport):
         detections = yolo.detect(frame)
         persons    = [d for d in detections if d.class_id == 0]
 
+        # ── Annotate frame for stream (cheap, always done) ────────────────
+        h, w = frame.shape[:2]
+        cv2.line(frame, (w//2, 0), (w//2, h), (100, 100, 255), 1)
+        for d in detections:
+            color = (0, 255, 0) if d.class_id == 0 else (180, 180, 180)
+            cv2.rectangle(frame,
+                          (int(d.bbox_x1), int(d.bbox_y1)),
+                          (int(d.bbox_x2), int(d.bbox_y2)), color, 2)
+            cv2.putText(frame, f"{d.class_name} {d.confidence:.2f}",
+                        (int(d.bbox_x1), int(d.bbox_y1) - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+
         if persons:
-            # Pick largest bounding box (closest person)
             best = max(persons, key=lambda p: p.bbox_width * p.bbox_height)
-            t = Target(
-                cx=best.norm_cx,
-                cy=best.norm_cy,
-                confidence=best.confidence,
-                source='self'
-            )
+            # Highlight tracked target in bright green
+            cv2.rectangle(frame,
+                          (int(best.bbox_x1), int(best.bbox_y1)),
+                          (int(best.bbox_x2), int(best.bbox_y2)),
+                          (0, 255, 128), 3)
+            t = Target(cx=best.norm_cx, cy=best.norm_cy,
+                       confidence=best.confidence, source='self')
             state.update_my(t)
 
-            # Broadcast to partner over XBee
-            msg = {
-                'r': robot_id,
-                'cx': round(t.cx, 3),
-                'cy': round(t.cy, 3),
-                'cf': round(t.confidence, 2),
-                'st': 'T'   # T = TRACKING
-            }
-            xbee.send(msg)
+            # Label which robot this is and its confidence
+            cv2.putText(frame, f"Bot {robot_id} | conf={best.confidence:.2f}",
+                        (4, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 128), 1)
+
+            xbee.send({'r': robot_id, 'cx': round(t.cx, 3),
+                       'cy': round(t.cy, 3), 'cf': round(t.confidence, 2),
+                       'st': 'T'})
         else:
-            # Broadcast that we lost the target
-            xbee.send({'r': robot_id, 'st': 'L'})  # L = LOST
+            cv2.putText(frame, f"Bot {robot_id} | NO TARGET",
+                        (4, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1)
+            xbee.send({'r': robot_id, 'st': 'L'})
+
+        # Push annotated frame to stream buffer (non-blocking, O(1))
+        state.push_frame(frame)
 
 
 # ─── XBee Receive Thread ──────────────────────────────────────────────────────
@@ -218,6 +252,50 @@ def xbee_recv_thread(state: SwarmState, robot_id: str, xbee: XBeeTransport):
             elif msg.get('st') == 'L':
                 state.update_partner(None)
         time.sleep(0.02)
+
+
+# ─── MJPEG Stream Thread (optional, --stream flag) ────────────────────────────
+STREAM_PORT = 5000
+
+def make_stream_handler(state: SwarmState):
+    """Factory so the handler can access shared state."""
+    class StreamHandler(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass  # Silence HTTP access logs
+
+        def do_GET(self):
+            if self.path != '/':
+                self.send_response(404); self.end_headers(); return
+            self.send_response(200)
+            self.send_header('Content-Type',
+                             'multipart/x-mixed-replace; boundary=frame')
+            self.end_headers()
+            while True:
+                frame = state.pop_frame()
+                if frame is None:
+                    time.sleep(0.05)
+                    continue
+                ret, jpg = cv2.imencode('.jpg', frame,
+                                        [cv2.IMWRITE_JPEG_QUALITY, 60])
+                if not ret:
+                    continue
+                try:
+                    self.wfile.write(
+                        b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
+                        + jpg.tobytes() + b'\r\n')
+                except Exception:
+                    break  # Client disconnected
+    return StreamHandler
+
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+
+def stream_thread(state: SwarmState):
+    handler = make_stream_handler(state)
+    server  = ThreadedHTTPServer(('0.0.0.0', STREAM_PORT), handler)
+    log.info(f"[Stream] Live feed at http://0.0.0.0:{STREAM_PORT}")
+    server.serve_forever()
 
 
 # ─── Main Control Loop ────────────────────────────────────────────────────────
@@ -273,10 +351,14 @@ def main():
     parser = argparse.ArgumentParser(description='Swarm Bot — Symmetric Peer')
     parser.add_argument('--id', required=True, choices=['A', 'B'],
                         help='Robot identity: A or B')
+    parser.add_argument('--stream', action='store_true',
+                        help='Enable MJPEG stream on port 5000 (for debugging)')
     args = parser.parse_args()
 
     log.info(f"=== SWARM BOT — Robot {args.id} ===")
     log.info(f"XBee: {XBEE_PORT} | Arduino: {ARDUINO_PORT} | Camera: {CAMERA_DEVICE}")
+    if args.stream:
+        log.info(f"[Stream] Enabled — open http://<this-robot-ip>:{STREAM_PORT} in browser")
 
     # Initialise hardware
     ser  = init_serial(ARDUINO_PORT, BAUD_RATE)
@@ -294,6 +376,12 @@ def main():
             threading.Thread(target=xbee_recv_thread,
                              args=(state, args.id, xbee), daemon=True),
         ]
+        # Optional stream thread — completely decoupled from YOLO and motors
+        if args.stream:
+            threads.append(
+                threading.Thread(target=stream_thread,
+                                 args=(state,), daemon=True)
+            )
         for t in threads:
             t.start()
 
