@@ -1,14 +1,27 @@
 I want you to act as the systems engineer for a ground-based proof of concept for my autonomous swarm-drone project.
 
 > [!WARNING]
-> **SYSTEMS ENGINEER UPDATE (Sept 2026):** 
-> This document serves as the original project specification and high-level goal mapping. 
-> However, **several hardware assumptions in this document are INCORRECT** based on physical testing:
-> 1. **Motor Pins:** The AlphaBot2-Ar does *not* use digital pins D4-D7 for motors. It uses Analog pins (A0-A3) for direction and D5/D6 for PWM.
-> 2. **Power Architecture:** Running YOLO on all 4 cores of the Pi 4 will cause a brownout and Wi-Fi disconnect. Inference must be throttled to 1-2 threads.
-> 3. **Model Choice:** We are using **YOLO11n exported to NCNN (FP16)** running via a custom Python wrapper, *not* PyTorch or Ultralytics natively.
-> 
-> **For all ground-truth technical details, pin mappings, and current phase progress, refer exclusively to the `README.md`.**
+> **SYSTEMS ENGINEER UPDATE (Sept 2026):**
+> This document is the original project specification and high-level goal map.
+> **Several assumptions are INCORRECT or SUPERSEDED** based on physical testing.
+> For all ground-truth technical details refer exclusively to `README.md`.
+>
+> **Hardware corrections:**
+> 1. **Motor Pins:** AlphaBot2-Ar uses Analog pins (A0-A3) for direction, D5/D6 for PWM — NOT digital D4-D7.
+> 2. **Right motor is physically mirrored** — direction inverted in software (`INVERT_RIGHT = True`).
+> 3. **Power:** Running YOLO on all 4 CPU cores causes a brown-out and Wi-Fi disconnect. Throttled to `num_threads=1`.
+> 4. **SD Card:** A brown-out crash can corrupt the SD card filesystem. Fix: remove card, run `chkdsk` on Windows, reinsert.
+>
+> **Architecture corrections:**
+> 5. **Swarm topology is symmetric** — both robots are equal peers, NOT master/slave. Both run `swarm_bot.py --id A/B`.
+> 6. **XBee is bidirectional** — both robots simultaneously send AND receive target data. The robot with higher confidence detection leads steering.
+> 7. **Model:** YOLO11n exported to NCNN FP16, run via custom Python wrapper. No PyTorch. No Ultralytics at runtime.
+> 8. **Ports:** XBee = `/dev/ttyUSB0`, Arduino = `/dev/ttyUSB1`, Camera = `/dev/video0` on both robots.
+>
+> **What is complete (Sept 22, 2026):**
+> - Phases 0–6 complete: motors, serial bridge, YOLO, streaming, hysteresis tracking, XBee link verified.
+> - Pending: full cooperative ground test (Phase 7), forward-drive + PID (Phase 8).
+
 
 Do NOT start coding immediately.
 
