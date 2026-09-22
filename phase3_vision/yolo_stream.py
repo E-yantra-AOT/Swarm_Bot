@@ -5,6 +5,8 @@ from socketserver import ThreadingMixIn
 import threading
 import sys
 from pathlib import Path
+
+# Add the shared directory to the Python path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "shared"))
 from yolo_ncnn import YoloNcnn
 
