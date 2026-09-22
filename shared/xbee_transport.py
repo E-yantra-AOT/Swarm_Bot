@@ -108,6 +108,7 @@ class XBeeTransport:
                         return msg
                     except (json.JSONDecodeError, UnicodeDecodeError) as e:
                         logger.warning(f"[XBee] Bad packet: {line!r} → {e}")
+                        self._rx_buffer = b""  # Clear buffer to prevent cascading corruption
         except Exception as e:
             logger.error(f"[XBee] Recv error: {e}")
         return None
