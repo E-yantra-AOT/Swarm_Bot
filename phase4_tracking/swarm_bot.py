@@ -170,6 +170,14 @@ def stop_motors(ser):
     return send_motor(ser, 0, 'F', 0, 'F')
 
 
+def send_display(ser, line1, line2):
+    """Send a display command to the Arduino OLED: D,<line1>,<line2>"""
+    if ser:
+        cmd = f"D,{line1},{line2}\n"
+        ser.write(cmd.encode('ascii'))
+
+
+
 # ─── Camera + YOLO Thread ─────────────────────────────────────────────────────
 def camera_thread(state: SwarmState, robot_id: str, xbee: XBeeTransport):
     log.info("Loading YOLO model (1 thread)...")
@@ -302,18 +310,27 @@ def stream_thread(state: SwarmState):
 def control_loop(state: SwarmState, ser):
     log.info("Motor control loop active.")
     last_log = 0
+    last_display = ''      # Track last OLED state to avoid redundant I2C writes
+    last_display_time = 0  # Rate-limit display updates
 
     while True:
         target = state.best_target()
+        now = time.time()
 
         if target is None:
             # No fresh target from either source → stop
             if state.is_turning:
                 stop_motors(ser)
                 state.is_turning = False
-            if time.time() - last_log > 1.0:
+            if now - last_log > 1.0:
                 log.info("No target (own or partner) — stopped.")
-                last_log = time.time()
+                last_log = now
+            # ── OLED: show searching ──
+            disp_key = 'SEARCH'
+            if disp_key != last_display or (now - last_display_time > 2.0):
+                send_display(ser, "SEARCHING", "No human")
+                last_display = disp_key
+                last_display_time = now
             time.sleep(0.05)
             continue
 
@@ -337,11 +354,20 @@ def control_loop(state: SwarmState, ser):
             else:
                 cmd = stop_motors(ser)
 
-        if time.time() - last_log > 0.5:
+        if now - last_log > 0.5:
             direction = "RIGHT" if error_x > 0 else "LEFT " if error_x < 0 else "CNTR "
             log.info(f"[{target.source:^7}] conf={target.confidence:.2f} "
                      f"err={error_x:+.2f} → {direction} | {cmd}")
-            last_log = time.time()
+            last_log = now
+
+        # ── OLED: show human detected ──
+        disp_key = f'HUMAN_{target.source}'
+        if disp_key != last_display or (now - last_display_time > 0.5):
+            conf_pct = int(target.confidence * 100)
+            src_label = "CAM" if target.source == 'self' else "XBEE"
+            send_display(ser, "HUMAN FOUND", f"{src_label} {conf_pct}%")
+            last_display = disp_key
+            last_display_time = now
 
         time.sleep(0.05)
 
@@ -364,6 +390,9 @@ def main():
     ser  = init_serial(ARDUINO_PORT, BAUD_RATE)
     xbee = XBeeTransport(XBEE_PORT)
     state = SwarmState()
+
+    # Show robot identity on OLED at boot
+    send_display(ser, f"ROBOT {args.id}", "Booting...")
 
     if not xbee.is_connected:
         log.warning("XBee not connected — running in solo mode (own camera only).")
