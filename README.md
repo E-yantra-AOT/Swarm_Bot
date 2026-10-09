@@ -2,6 +2,11 @@
 
 This repository contains the software stack for a two-robot ground swarm proof-of-concept. It serves as the foundation for autonomous coordination, person-tracking, and XBee-based communication between two equal robotic peers.
 
+<p align="center">
+  <img src="assets/ground_bot_integrated.jpg" width="520" />
+  <br><em>Fully integrated AlphaBot2-Ar ground node — Raspberry Pi 4B companion computer, tracking camera, and XBee-PRO S2C wireless mesh transceiver.</em>
+</p>
+
 ## Hardware Stack (Per Robot)
 *   **Base:** Waveshare AlphaBot2-Base (contains TB6612FNG motor driver & 2× 14500 Li-ion batteries)
 *   **Adapter Shield:** AlphaBot2-Ar (Arduino UNO compatible adapter)
@@ -11,8 +16,19 @@ This repository contains the software stack for a two-robot ground swarm proof-o
 *   **RF Communication:** XBee-PRO S2C (Zigbee TH PRO, 9600 baud, Transparent mode) — `/dev/ttyUSB0`
 *   **Motor Bridge:** Arduino UNO R3 connected via USB — `/dev/ttyUSB1`
 
+<p align="center">
+  <img src="assets/IMG20260917142633.jpg" width="370" />
+  <img src="assets/IMG20260917142717.jpg" width="370" />
+  <br><em>Left: Top view of assembled ground node with Pi 4B serial bridge. Right: Bottom view showing differential drive motors and dual 14500 Li-ion cells.</em>
+</p>
+
 ## Critical Hardware Discoveries & Pin Mappings
 The official documentation for the AlphaBot2-Ar is misleading regarding motor pins. The true pin mapping is defined by the yellow "Control JMP" jumper matrix on the AlphaBot2-Ar shield itself.
+
+<p align="center">
+  <img src="assets/IMG20260917142642.jpg" width="460" />
+  <br><em>AlphaBot2-Ar adapter shield top view — the yellow "Control JMP" jumper matrix (top-left) physically determines which Arduino pins drive the motor direction logic. XBee interface slot (right) and OLED socket also visible.</em>
+</p>
 
 **The motor direction pins are wired to the Arduino's Analog pins:**
 *   **Left Motor (A):**
@@ -28,6 +44,7 @@ The official documentation for the AlphaBot2-Ar is misleading regarding motor pi
 
 **Right motor is physically mounted mirrored** — direction logic is inverted in software (`INVERT_RIGHT = True` in `swarm_bot.py`). Do NOT change physical wiring.
 
+
 ## XBee Configuration (Set in XCTU — do not change)
 | Setting | Value |
 |---|---|
@@ -37,6 +54,22 @@ The official documentation for the AlphaBot2-Ar is misleading regarding motor pi
 | Baud Rate | `9600` |
 | Radio A DL | `41F52F20` (points to B) |
 | Radio B DL | `41F52FD2` (points to A) |
+
+<p align="center">
+  <img src="assets/IMG20260915115423.jpg" width="360" />
+  <br><em>Digi XBee PRO S2C RF module (Zigbee TH PRO) — the mesh radio used by both ground nodes.</em>
+</p>
+
+<p align="center">
+  <img src="assets/IMG20260915124745.jpg" width="360" />
+  <img src="assets/IMG20260915124752.jpg" width="360" />
+  <br><em>Bidirectional XBee serial telemetry testing between the two ground nodes.</em>
+</p>
+
+<p align="center">
+  <img src="assets/IMG20260915154806.jpg" width="600" />
+  <br><em>Full telemetry loop test — laptop transmitting to the ground node, verifying the transparent-mode JSON pipeline end-to-end.</em>
+</p>
 
 ## Power & Thermal Considerations
 Running computer vision models (YOLO) forces the Raspberry Pi 4 CPU to 100% utilisation. Because the Pi simultaneously powers a webcam, Arduino, and XBee via USB, this creates massive instantaneous current spikes.
@@ -208,3 +241,26 @@ Swarm_Bot/
 |-- robot_a/                                  # Reserved for Robot A specific future code
 |-- robot_b/                                  # Reserved for Robot B specific future code
 ```
+
+---
+
+## Experiment Gallery
+
+### YOLO Vision & Swarm Tracking Tests
+
+<p align="center">
+  <img src="assets/IMG20260922160510.jpg" width="640" />
+  <br><em>Single and dual ground node person tracking with YOLO bounding boxes streamed live to the command centre.</em>
+</p>
+
+<p align="center">
+  <img src="assets/IMG20260922162435.jpg" width="640" />
+  <br><em>Both AlphaBot2-Ar ground nodes deployed simultaneously — coordinating target data over XBee while streaming independent YOLO feeds.</em>
+</p>
+
+### Swarm Negotiation Logs (Phase 7)
+
+<p align="center">
+  <img src="assets/swarm_negotiation_logs.png" width="800" />
+  <br><em>Real-time swarm negotiation terminal output over XBee. The active node dynamically switches pursuit leadership between <code>[self]</code> and <code>[partner]</code> based on YOLO confidence, issuing <code>M,speed,dir,speed,dir</code> motor commands. Note the explicit <code>No target (own or partner) — stopped.</code> safety line when both detections go stale.</em>
+</p>
