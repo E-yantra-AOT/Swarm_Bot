@@ -61,9 +61,9 @@ BAUD_RATE      = 115200
 # Motor tuning
 KP_TURN        = 250
 MAX_SPEED      = 120
-MIN_SPEED      = 55
-DEADZONE_STOP  = 0.12   # Stop turning when error < this
-DEADZONE_START = 0.20   # Start turning when error > this
+MIN_SPEED      = 80
+DEADZONE_STOP  = 0.05   # Stop turning when error < this
+DEADZONE_START = 0.10   # Start turning when error > this
 
 # Inversion (one motor is mounted mirrored on AlphaBot2-Ar)
 INVERT_RIGHT   = True
