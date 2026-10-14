@@ -135,17 +135,17 @@ Running computer vision models (YOLO) forces the Raspberry Pi 4 CPU to 100% util
 ## Network & Access
 | Robot | Hostname | Current IP (DHCP) | SSH User | Password |
 |---|---|---|---|---|
-| **Robot A** | `pi.local` | `10.219.37.74` | `pi` | `raspberry` |
-| **Robot B** | `pi2.local` | `10.219.37.184` | `pi2` | `raspberry` |
+| **Robot A** | `pi.local` | `10.188.41.74` | `pi` | `raspberry` |
+| **Robot B** | `pi2.local` | `10.188.41.184` | `pi2` | `raspberry` |
 
 > [!WARNING]
-> IPs are assigned by DHCP and may change if the router restarts or the bots connect to a different network. Always verify with `ping pi.local` before assuming a fixed IP.
+> IPs are assigned by DHCP and change whenever the bots connect to a different network or router. Always verify with `Resolve-DnsName pi.local` or `ping pi.local` before assuming a fixed IP.
 
 ## How to Run
 
 ### Option 1 — Windows PowerShell launcher (recommended)
 ```powershell
-# From the repo root — launches both robots in separate terminal windows:
+# From the repo root — automatically resolves mDNS and launches both robots:
 .\start_swarm.ps1
 
 # Without the MJPEG stream (lower CPU load):
@@ -153,25 +153,25 @@ Running computer vision models (YOLO) forces the Raspberry Pi 4 CPU to 100% util
 ```
 
 Stream URLs when `--stream` is active:
-- Robot A: `http://10.219.37.74:5000`
-- Robot B: `http://10.219.37.184:5000`
+- Robot A: `http://10.188.41.74:5000`
+- Robot B: `http://10.188.41.184:5000`
 
 ### Option 2 — Manual SSH (two separate terminals)
 ```bash
 # Robot A
-ssh pi@10.219.37.74
+ssh pi@10.188.41.74
 PYTHONUNBUFFERED=1 ~/swarm_venv/bin/python ~/swarm_bot.py --id A --stream
 
 # Robot B
-ssh pi2@10.219.37.184
+ssh pi2@10.188.41.184
 PYTHONUNBUFFERED=1 ~/swarm_venv/bin/python ~/swarm_bot.py --id B --stream
 ```
 
 ### Stop both robots
 ```bash
 # Kill gracefully on each Pi (atexit handler sends stop command to Arduino):
-ssh pi@10.219.37.74 "pkill -2 -f swarm_bot.py"
-ssh pi2@10.219.37.184 "pkill -2 -f swarm_bot.py"
+ssh pi@10.188.41.74 "pkill -2 -f swarm_bot.py"
+ssh pi2@10.188.41.184 "pkill -2 -f swarm_bot.py"
 ```
 
 > [!CAUTION]
